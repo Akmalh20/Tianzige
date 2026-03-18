@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pro Tianzige Whiteboard v2</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <style>
+        :root { 
+            --primary: #2196f3; 
+            --danger: #ff5252;
+            --bg: #eceff1; 
+            --panel: #ffffff; 
+        }
+        
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: var(--bg); 
+            margin: 0; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .toolbar { 
+            background: var(--panel); 
+            padding: 12px; 
+            display: flex; 
+            gap: 10px; 
+            flex-wrap: wrap; 
+            border-bottom: 2px solid #cfd8dc; 
+            justify-content: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        #canvas-wrapper { 
+            flex: 1; 
+            overflow: auto; 
+            display: flex; 
+            justify-content: center; 
+            align-items: flex-start;
+            padding: 20px; 
+            background: #b0bec5;
+        }
+
+        .canvas-container { 
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2); 
+            border-radius: 4px;
+        }
+
+        .page-controls { 
+            background: var(--panel); 
+            padding: 15px; 
+            border-top: 2px solid #cfd8dc;
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            gap: 20px;
+        }
+        
+        button { 
+            padding: 10px 18px; 
+            border-radius: 6px; 
+            border: 1px solid #b0bec5; 
+            background: white; 
+            cursor: pointer; 
+            font-size: 14px; 
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        button:hover { background: #f1f8e9; }
+        button.active { background: var(--primary); color: white; border-color: var(--primary); }
+        button.danger { color: var(--danger); border-color: var(--danger); }
+        button.danger:hover { background: #ffebee; }
+        
+        .tool-group { display: flex; gap: 5px; align-items: center; border-right: 1px solid #ddd; padding-right: 10px; }
+        input[type="color"] { border: none; width: 35px; height: 35px; cursor: pointer; background: none; }
+
+        @media (max-width: 600px) {
+            .toolbar { padding: 8px; gap: 5px; }
+            button { padding: 8px; font-size: 12px; }
+            .tool-group { padding-right: 5px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="toolbar">
+        <div class="tool-group">
+            <button id="btn-draw" class="active" onclick="setMode('draw')">🖌️ Draw</button>
+            <button id="btn-erase" onclick="setMode('erase')">🧽 Erase</button>
+            <button id="btn-select" onclick="setMode('select')">🖱️ Edit</button>
+        </div>
+        
+        <div class="tool-group">
+            <button onclick="setGrid('multi')">📱 Grid</button>
+            <button onclick="setGrid('large')">🔍 Large</button>
+            <input type="color" id="colorPicker" value="#000000" onchange="updateBrush()">
+        </div>
+
+        <button class="danger" onclick="clearCurrentPage()">🗑️ Clear Page</button>
+    </div>
+
+    <div id="canvas-wrapper">
+        <canvas id="mainCanvas"></canvas>
+    </div>
+
+    <div class="page-controls">
+        <button onclick="changePage(-1)">◀ Prev</button>
+        <strong id="page-info">Page 1 / 1</strong>
+        <button onclick="changePage(1)">Next ▶</button>
+        <button onclick="addNewPage()" style="background: #e3f2fd; color: #1565c0;">➕ New Page</button>
+        <button onclick="saveAsImage()" style="background: #4caf50; color: white; border: none;">💾 Export PNG</button>
+    </div>
+
+    <script>
+        let canvas;
+        let pages = JSON.parse(localStorage.getItem('tianzige_pages')) || [];
+        let currentPageIndex = 0;
+        let currentGridType = 'multi';
+
+        const CONFIG = {
+            width: 800,
+            height: 1100,
+            multi: { cols: 4, rows: 6, size: 160, pinyinH: 40 },
+            large: { cols: 1, rows: 1, size: 600, pinyinH: 120 }
+        };
+
+        function init() {
+            canvas = new fabric.Canvas('mainCanvas', {
+                width: CONFIG.width,
+                height: CONFIG.height,
+                isDrawingMode: true,
+                backgroundColor: 'white'
+            });
+
+            updateBrush();
+
+            // Load existing data or start fresh
+            if (pages.length === 0) {
+                addNewPage();
+            } else {
+                loadPage(0);
+            }
+
+            // Auto-save to localStorage on any modification
+            canvas.on('object:added', saveToStorage);
+            canvas.on('object:modified', saveToStorage);
+            canvas.on('object:removed', saveToStorage);
+        }
+
+        function updateBrush() {
+            const color = document.getElementById('colorPicker').value;
+            canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+            canvas.freeDrawingBrush.width = 4;
+            canvas.freeDrawingBrush.color = color;
+        }
+
+        function setMode(mode) {
+            canvas.isDrawingMode = (mode === 'draw' || mode === 'erase');
+            
+            if (mode === 'erase') {
+                canvas.freeDrawingBrush.color = 'white'; // Simple "eraser" effect
+                canvas.freeDrawingBrush.width = 20;
+            } else if (mode === 'draw') {
+                updateBrush();
+            }
+
+            document.querySelectorAll('.toolbar button').forEach(b => b.classList.remove('active'));
+            document.getElementById(`btn-${mode}`).classList.add('active');
+        }
+
+        function drawGridBackground() {
+            const tempCanvas = document.createElement('canvas');
+            const ctx = tempCanvas.getContext('2d');
+            const cfg = CONFIG[currentGridType];
+            
+            tempCanvas.width = CONFIG.width;
+            tempCanvas.height = CONFIG.height;
+
+            const totalCellH = cfg.size + cfg.pinyinH + 25;
+            const startX = (CONFIG.width - (cfg.cols * cfg.size)) / 2;
+            const startY = 50;
+
+            for (let r = 0; r < cfg.rows; r++) {
+                for (let c = 0; c < cfg.cols; c++) {
+                    const x = startX + (c * cfg.size);
+                    const y = startY + (r * totalCellH);
+
+                    // Pinyin Section
+                    ctx.strokeStyle = '#cfd8dc';
+                    ctx.lineWidth = 1;
+                    for(let i=0; i<=3; i++) {
+                        ctx.beginPath();
+                        ctx.moveTo(x, y + (i * (cfg.pinyinH/3)));
+                        ctx.lineTo(x + cfg.size, y + (i * (cfg.pinyinH/3)));
+                        ctx.stroke();
+                    }
+
+                    // Main Box (Tianzige)
+                    const ty = y + cfg.pinyinH;
+                    ctx.strokeStyle = '#78909c';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(x, ty, cfg.size, cfg.size);
+
+                    // Dashed Cross
+                    ctx.setLineDash([5, 5]);
+                    ctx.beginPath();
+                    ctx.moveTo(x + cfg.size/2, ty); ctx.lineTo(x + cfg.size/2, ty + cfg.size);
+                    ctx.moveTo(x, ty + cfg.size/2); ctx.lineTo(x + cfg.size, ty + cfg.size/2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            }
+            
+            canvas.setBackgroundImage(tempCanvas.toDataURL(), canvas.renderAll.bind(canvas));
+        }
+
+        function setGrid(type) {
+            currentGridType = type;
+            drawGridBackground();
+            saveToStorage();
+        }
+
+        function addNewPage() {
+            const emptyState = { objects: [], grid: currentGridType };
+            pages.push(JSON.stringify(emptyState));
+            currentPageIndex = pages.length - 1;
+            loadPage(currentPageIndex);
+        }
+
+        function loadPage(index) {
+            const pageData = JSON.parse(pages[index]);
+            currentGridType = pageData.grid || 'multi';
+            
+            canvas.clear();
+            canvas.loadFromJSON(pages[index], () => {
+                drawGridBackground();
+                canvas.renderAll();
+                updateUI();
+            });
+        }
+
+        function changePage(dir) {
+            let newIndex = currentPageIndex + dir;
+            if (newIndex >= 0 && newIndex < pages.length) {
+                currentPageIndex = newIndex;
+                loadPage(currentPageIndex);
+            }
+        }
+
+        function saveToStorage() {
+            const currentState = canvas.toJSON();
+            currentState.grid = currentGridType;
+            pages[currentPageIndex] = JSON.stringify(currentState);
+            localStorage.setItem('tianzige_pages', JSON.stringify(pages));
+        }
+
+        function clearCurrentPage() {
+            if(confirm("Wipe this page clean?")) {
+                canvas.clear();
+                drawGridBackground();
+                saveToStorage();
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('page-info').innerText = `Page ${currentPageIndex + 1} / ${pages.length}`;
+        }
+
+        function saveAsImage() {
+            const dataURL = canvas.toDataURL({ format: 'png', multiplier: 2 });
+            const link = document.createElement('a');
+            link.download = `practice-sheet-p${currentPageIndex+1}.png`;
+            link.href = dataURL;
+            link.click();
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
